@@ -70,11 +70,20 @@ function setupEventListeners() {
     });
 
     const focusUrl = `raycast://focus/start?${params.toString()}`;
-    chrome.tabs.create({ url: focusUrl, active: false }, (tab) => {
-      setTimeout(() => {
-        chrome.tabs.remove(tab.id);
-      }, 100);
-    });
+
+    console.log(`Opening Raycast Focus: ${focusUrl}`);
+
+    // Raycast Focusを起動
+    const tab = await chrome.tabs.create({ url: focusUrl, active: true });
+
+    // タブが作成されたら、少し待ってから閉じる
+    setTimeout(async () => {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch (e) {
+        console.log('Tab already closed');
+      }
+    }, 500);
 
     // 統計を更新
     const { statistics } = await chrome.storage.sync.get('statistics');

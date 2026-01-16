@@ -473,3 +473,44 @@ README.mdやextension説明に以下を記載すべき：
 Raycast Focus Sessionは、強力な集中管理機能を提供し、URL Scheme（Deeplinks）を通じて外部から制御可能です。現在のChrome拡張は、正しいURL Scheme（`raycast://focus/start`）に修正することで、Raycast Focusと連携できるようになります。
 
 ただし、セキュリティ上の理由から、ユーザーはDeeplinkの実行を毎回確認する必要があります。これは仕様であり、回避することはできません。この点をユーザーに明確に伝えることが重要です。
+
+---
+
+## 調査メモ: categories 指定で Focus が開かない場合
+
+### 現象
+`raycast://focus/start?...&categories=...&mode=block` を使った場合に、Raycast Focus Session が起動しないことがある。
+
+### 公式ドキュメント確認（2026-01-16）
+Raycast Manual の Focus ページに Deeplink 仕様が明記されている。  
+`raycast://focus/start` と `raycast://focus/toggle` の両方が利用可能で、`categories` は「アプリ/サイトカテゴリのカンマ区切り」として必須パラメータとして示されている。  
+Start は「セッションがアクティブな場合は何もしない」と明記されている。  
+参照: https://manual.raycast.com/focus?via=cm
+
+#### 正しいURL例（公式記載）
+- `raycast://focus/start?goal=Deep%20Focus&categories=social,gaming&duration=300&mode=block`
+- `raycast://focus/toggle?goal=Deep%20Focus&categories=social,gaming&duration=300&mode=block`
+
+### 有力な原因
+1. **Raycast側に同名カテゴリが存在しない（推測）**  
+   公式ドキュメントでは `categories` は「アプリ/サイトカテゴリ名のカンマ区切り」と記載されているため、未作成・スペル違い・大文字小文字違いがあると起動が失敗する可能性がある（この点は明示されていないため推測）。
+
+2. **カテゴリ文字列の形式不備**  
+   カテゴリはカンマ区切り（例: `social,video`）のみ。スペースや全角記号が混じると無効になる可能性がある。
+
+### 切り分け手順
+1. **カテゴリなしで起動できるか確認**  
+   ターミナルで以下を実行し、起動するか確認：  
+   `open "raycast://focus/start?goal=Test&duration=60&mode=block"`
+
+2. **単一カテゴリで起動確認**  
+   事前にRaycast Focusでカテゴリを作成し、同名でテスト：  
+   `open "raycast://focus/start?goal=Test&duration=60&categories=social&mode=block"`
+
+3. **複数カテゴリの形式確認**  
+   `categories=social,video` の形式で確認し、スペースは入れない。
+
+### 拡張機能側の対策メモ
+- 保存時に `categories` を正規化（空白除去・空要素削除）する。  
+- 未入力の場合は `categories` パラメータ自体を付けない。  
+- UIに「カテゴリはRaycastで事前作成が必要」と明記する。

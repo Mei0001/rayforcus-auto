@@ -20,13 +20,19 @@ async function loadSettings() {
 
 // ブラックリストを読み込む
 async function loadBlacklist() {
-  const { blacklist } = await chrome.storage.sync.get('blacklist');
+  const { blacklist, siteCategories, siteRules } = await chrome.storage.sync.get([
+    'blacklist',
+    'siteCategories',
+    'siteRules'
+  ]);
   const container = document.getElementById('blacklistContainer');
   container.innerHTML = '';
   
   if (blacklist && blacklist.length > 0) {
     blacklist.forEach(site => {
-      const item = createListItem(site, () => removeFromBlacklist(site));
+      const categories = (siteCategories && siteCategories[site]) || '';
+      const rules = (siteRules && siteRules[site]) || {};
+      const item = createBlacklistItem(site, categories, rules);
       container.appendChild(item);
     });
   } else {
@@ -102,6 +108,101 @@ function createListItem(text, onRemove) {
   return item;
 }
 
+// ブラックリスト用のリストアイテムを作成（カテゴリ入力付き）
+function createBlacklistItem(site, categories, rules) {
+  const item = document.createElement('div');
+  item.className = 'list-item';
+
+  const siteLabel = document.createElement('span');
+  siteLabel.className = 'site-label';
+  siteLabel.textContent = site;
+
+  const focusGroup = document.createElement('label');
+  focusGroup.className = 'checkbox-group';
+  const focusCheckbox = document.createElement('input');
+  focusCheckbox.type = 'checkbox';
+  focusCheckbox.checked = rules.enabled !== false;
+  const focusText = document.createElement('span');
+  focusText.textContent = 'Focus対象';
+  focusGroup.appendChild(focusCheckbox);
+  focusGroup.appendChild(focusText);
+
+  const categoryGroup = document.createElement('label');
+  categoryGroup.className = 'checkbox-group';
+  const categoryCheckbox = document.createElement('input');
+  categoryCheckbox.type = 'checkbox';
+  categoryCheckbox.checked = rules.blockCategories === true;
+  const categoryText = document.createElement('span');
+  categoryText.textContent = 'カテゴリブロック';
+  categoryGroup.appendChild(categoryCheckbox);
+  categoryGroup.appendChild(categoryText);
+
+  const input = document.createElement('input');
+  input.className = 'category-input';
+  input.type = 'text';
+  input.placeholder = 'カテゴリ（例: social,video）';
+  input.value = categories;
+  input.disabled = !categoryCheckbox.checked;
+  input.addEventListener('change', async () => {
+    const { siteCategories } = await chrome.storage.sync.get('siteCategories');
+    const updated = siteCategories || {};
+    const normalized = input.value
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(',');
+
+    input.value = normalized;
+
+    if (normalized) {
+      updated[site] = normalized;
+    } else {
+      delete updated[site];
+    }
+
+    await chrome.storage.sync.set({ siteCategories: updated });
+    showToast('カテゴリを保存しました');
+  });
+
+  focusCheckbox.addEventListener('change', async () => {
+    const { siteRules } = await chrome.storage.sync.get('siteRules');
+    const updated = siteRules || {};
+    const current = updated[site] || {};
+    updated[site] = {
+      ...current,
+      enabled: focusCheckbox.checked
+    };
+    await chrome.storage.sync.set({ siteRules: updated });
+    showToast('Focus対象を更新しました');
+  });
+
+  categoryCheckbox.addEventListener('change', async () => {
+    const { siteRules } = await chrome.storage.sync.get('siteRules');
+    const updated = siteRules || {};
+    const current = updated[site] || {};
+    updated[site] = {
+      ...current,
+      blockCategories: categoryCheckbox.checked
+    };
+    input.disabled = !categoryCheckbox.checked;
+    await chrome.storage.sync.set({ siteRules: updated });
+    showToast('カテゴリブロックを更新しました');
+  });
+
+  const button = document.createElement('button');
+  button.className = 'remove-btn';
+  button.textContent = '削除';
+  button.addEventListener('click', () => removeFromBlacklist(site));
+
+  item.appendChild(siteLabel);
+  item.appendChild(focusGroup);
+  item.appendChild(categoryGroup);
+  item.appendChild(input);
+  item.appendChild(button);
+
+  return item;
+}
+
 // イベントリスナーを設定
 function setupEventListeners() {
   // ブラックリストに追加
@@ -110,10 +211,14 @@ function setupEventListeners() {
     const value = input.value.trim();
     
     if (value) {
-      const { blacklist } = await chrome.storage.sync.get('blacklist');
+      const { blacklist, siteRules } = await chrome.storage.sync.get(['blacklist', 'siteRules']);
       const updatedList = [...(blacklist || []), value];
+      const updatedRules = siteRules || {};
+      if (!updatedRules[value]) {
+        updatedRules[value] = { enabled: true, blockCategories: false };
+      }
       
-      await chrome.storage.sync.set({ blacklist: updatedList });
+      await chrome.storage.sync.set({ blacklist: updatedList, siteRules: updatedRules });
       input.value = '';
       await loadBlacklist();
     }
@@ -159,16 +264,36 @@ function setupEventListeners() {
     await chrome.storage.sync.set({ settings });
     
     // トーストを表示
-    showToast();
+    showToast('設定を保存しました');
   });
+
+  // カテゴリJSONをダウンロード
+  const downloadButton = document.getElementById('downloadCategoriesJson');
+  if (downloadButton) {
+    downloadButton.addEventListener('click', downloadCategoriesJson);
+  }
 }
 
 // ブラックリストから削除
 async function removeFromBlacklist(site) {
-  const { blacklist } = await chrome.storage.sync.get('blacklist');
+  const { blacklist, siteCategories, siteRules } = await chrome.storage.sync.get([
+    'blacklist',
+    'siteCategories',
+    'siteRules'
+  ]);
   const updatedList = blacklist.filter(item => item !== site);
+
+  const updatedCategories = siteCategories || {};
+  delete updatedCategories[site];
+
+  const updatedRules = siteRules || {};
+  delete updatedRules[site];
   
-  await chrome.storage.sync.set({ blacklist: updatedList });
+  await chrome.storage.sync.set({
+    blacklist: updatedList,
+    siteCategories: updatedCategories,
+    siteRules: updatedRules
+  });
   await loadBlacklist();
 }
 
@@ -182,11 +307,76 @@ async function removeFromWhitelist(pattern) {
 }
 
 // トーストを表示
-function showToast() {
+function showToast(message) {
   const toast = document.getElementById('toast');
+  if (message) {
+    toast.textContent = `✓ ${message}`;
+  }
   toast.style.display = 'block';
   
   setTimeout(() => {
     toast.style.display = 'none';
   }, 3000);
+}
+
+function normalizeCategories(value) {
+  if (!value) {
+    return '';
+  }
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(',');
+}
+
+async function downloadCategoriesJson() {
+  const { blacklist, siteCategories, siteRules } = await chrome.storage.sync.get([
+    'blacklist',
+    'siteCategories',
+    'siteRules'
+  ]);
+
+  const categoriesMap = new Map();
+  (blacklist || []).forEach((site) => {
+    const rules = (siteRules && siteRules[site]) || {};
+    if (rules.enabled === false || rules.blockCategories !== true) {
+      return;
+    }
+
+    const rawCategories = siteCategories ? siteCategories[site] : '';
+    const normalized = normalizeCategories(rawCategories);
+    if (!normalized) {
+      return;
+    }
+
+    normalized.split(',').forEach((category) => {
+      if (!categoriesMap.has(category)) {
+        categoriesMap.set(category, new Set());
+      }
+      categoriesMap.get(category).add(site);
+    });
+  });
+
+  if (categoriesMap.size === 0) {
+    alert('カテゴリブロックが有効なサイトがありません。');
+    return;
+  }
+
+  const categories = Array.from(categoriesMap.entries()).map(([title, sites]) => ({
+    title,
+    websites: Array.from(sites).sort()
+  }));
+
+  const json = JSON.stringify(categories, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'raycast-focus-categories.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }

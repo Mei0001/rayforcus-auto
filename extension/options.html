@@ -94,11 +94,38 @@
       margin: 5px 0;
       background: #f9f9f9;
       border-radius: 6px;
+      gap: 10px;
     }
     
     .list-item span {
       font-size: 14px;
       color: #333;
+    }
+
+    .list-item .site-label {
+      min-width: 160px;
+      font-weight: 500;
+    }
+
+    .list-item .category-input {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #444;
+      white-space: nowrap;
+    }
+
+    .checkbox-group input {
+      margin: 0;
     }
     
     .remove-btn {
@@ -142,6 +169,21 @@
     
     .add-btn:hover {
       background: #FF4545;
+    }
+
+    .secondary-btn {
+      padding: 10px 20px;
+      background: #f0f0f0;
+      color: #333;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .secondary-btn:hover {
+      background: #e0e0e0;
     }
     
     .stats-grid {
@@ -266,6 +308,12 @@
       <p style="color: #666; font-size: 13px; margin: 0 0 10px 0;">
         これらのサイトにアクセスした際に、Focus Sessionの起動を提案します
       </p>
+      <p style="color: #666; font-size: 12px; margin: 0 0 10px 0;">
+        カテゴリはカンマ区切りで指定（例: <code>social,video</code>）。空欄の場合はカテゴリ指定なし。
+      </p>
+      <p style="color: #666; font-size: 12px; margin: 0 0 10px 0;">
+        Raycast Focus側に同名カテゴリが事前に作成されている必要があります。セッションがすでにアクティブな場合、Startは何も起こりません。
+      </p>
       
       <div class="list-container" id="blacklistContainer"></div>
       
@@ -288,6 +336,18 @@
         <input type="text" id="newWhitelistItem" placeholder="例: youtube.com/channel/*" />
         <button class="add-btn" id="addWhitelist">追加</button>
       </div>
+    </div>
+
+    <!-- カテゴリJSON -->
+    <div class="section">
+      <h2>📦 Focusカテゴリのエクスポート</h2>
+      <p style="color: #666; font-size: 13px; margin: 0 0 10px 0;">
+        「カテゴリブロック」にチェックを入れたサイトから、RaycastのImport用JSONを生成します。
+      </p>
+      <button class="secondary-btn" id="downloadCategoriesJson">JSONをダウンロード</button>
+      <p style="color: #666; font-size: 12px; margin: 10px 0 0 0;">
+        Raycastの「Import Focus Categories」から読み込めます。
+      </p>
     </div>
     
     <!-- 統計情報 -->

@@ -30,6 +30,8 @@ chrome.runtime.onInstalled.addListener(async () => {
       settings: DEFAULT_SETTINGS,
       blacklist: DEFAULT_BLACKLIST,
       whitelist: [],
+      siteRules: {},
+      siteCategories: {},
       cooldowns: {},
       statistics: {
         totalSessions: 0,
@@ -46,9 +48,23 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     return;
   }
 
+  // 特殊なURLをスキップ（about:blank, chrome://, edge://, etc.）
+  if (tab.url.startsWith('about:') ||
+      tab.url.startsWith('chrome:') ||
+      tab.url.startsWith('chrome-extension:') ||
+      tab.url.startsWith('edge:') ||
+      tab.url.startsWith('file:')) {
+    return;
+  }
+
   try {
     const url = new URL(tab.url);
     const hostname = url.hostname.replace('www.', '');
+
+    // hostnameが空の場合もスキップ
+    if (!hostname) {
+      return;
+    }
     
     // 設定を取得
     const data = await chrome.storage.sync.get([
@@ -68,12 +84,17 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       return;
     }
     
-    // ブラックリストにマッチするかチェック
-    const isBlacklisted = blacklist.some(pattern => 
-      hostname.includes(pattern) || pattern.includes(hostname)
-    );
-    
-    if (!isBlacklisted) {
+    const matchedSite = findMatchingSite(hostname, blacklist);
+
+    if (!matchedSite) {
+      return;
+    }
+
+    const { siteRules } = await chrome.storage.sync.get('siteRules');
+    const rules = siteRules || {};
+    const siteRule = rules[matchedSite];
+
+    if (siteRule && siteRule.enabled === false) {
       return;
     }
     
@@ -105,152 +126,40 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // Focus Session起動の確認を表示
 async function showFocusConfirmation(tabId, hostname, settings) {
-  // Content scriptを注入して確認ダイアログを表示
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: showConfirmDialog,
-      args: [hostname, settings.defaultSessionMinutes]
-    });
-  } catch (error) {
-    console.error('Failed to inject content script:', error);
-    // フォールバック: 通知を使用
-    await showNotification(hostname, settings);
-  }
-}
+  const delayMs = (settings.confirmationDelay || 0) * 1000;
+  const confirmUrl = chrome.runtime.getURL(
+    `confirm.html?hostname=${encodeURIComponent(hostname)}&minutes=${settings.defaultSessionMinutes}`
+  );
 
-// ページ内に確認ダイアログを表示する関数（タブ内で実行される）
-function showConfirmDialog(hostname, defaultMinutes) {
-  // すでにダイアログが表示されている場合はスキップ
-  if (document.getElementById('raycast-focus-dialog')) {
-    return;
-  }
-  
-  // ダイアログを作成
-  const dialog = document.createElement('div');
-  dialog.id = 'raycast-focus-dialog';
-  dialog.style.cssText = `
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    background: white;
-    border: 2px solid #FF6363;
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    z-index: 2147483647;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    max-width: 350px;
-    animation: slideIn 0.3s ease-out;
-  `;
-  
-  dialog.innerHTML = `
-    <style>
-      @keyframes slideIn {
-        from {
-          transform: translateX(400px);
-          opacity: 0;
-        }
-        to {
-          transform: translateX(0);
-          opacity: 1;
-        }
+  const openConfirmTab = async () => {
+    try {
+      const existingTabs = await chrome.tabs.query({ url: `${chrome.runtime.getURL('confirm.html')}*` });
+      const alreadyOpen = existingTabs.some((tab) => tab.url && tab.url.includes(`hostname=${encodeURIComponent(hostname)}`));
+      if (alreadyOpen) {
+        return;
       }
-      #raycast-focus-dialog h3 {
-        margin: 0 0 10px 0;
-        font-size: 18px;
-        color: #333;
-      }
-      #raycast-focus-dialog p {
-        margin: 0 0 15px 0;
-        color: #666;
-        font-size: 14px;
-      }
-      #raycast-focus-dialog button {
-        padding: 8px 16px;
-        margin: 5px 5px 5px 0;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.2s;
-      }
-      #raycast-focus-dialog .primary {
-        background: #FF6363;
-        color: white;
-      }
-      #raycast-focus-dialog .primary:hover {
-        background: #FF4545;
-      }
-      #raycast-focus-dialog .secondary {
-        background: #f0f0f0;
-        color: #333;
-      }
-      #raycast-focus-dialog .secondary:hover {
-        background: #e0e0e0;
-      }
-      #raycast-focus-dialog input {
-        width: 60px;
-        padding: 6px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 14px;
-        margin: 0 5px;
-      }
-    </style>
-    <h3>🎯 Focus Session を開始しますか？</h3>
-    <p><strong>${hostname}</strong> にアクセスしました</p>
-    <div style="margin-bottom: 15px;">
-      <input type="number" id="focus-minutes" value="${defaultMinutes}" min="1" max="180" />
-      <span style="color: #666; font-size: 14px;">分</span>
-    </div>
-    <button class="primary" id="start-focus">Focus 開始</button>
-    <button class="secondary" id="skip-focus">スキップ</button>
-    <button class="secondary" id="exclude-site">このサイトを除外</button>
-  `;
-  
-  document.body.appendChild(dialog);
-  
-  // イベントリスナーを設定
-  document.getElementById('start-focus').addEventListener('click', () => {
-    const minutes = document.getElementById('focus-minutes').value;
-    chrome.runtime.sendMessage({
-      action: 'startFocus',
-      minutes: parseInt(minutes),
-      hostname: hostname
-    });
-    dialog.remove();
-  });
-  
-  document.getElementById('skip-focus').addEventListener('click', () => {
-    chrome.runtime.sendMessage({
-      action: 'skipFocus',
-      hostname: hostname
-    });
-    dialog.remove();
-  });
-  
-  document.getElementById('exclude-site').addEventListener('click', () => {
-    chrome.runtime.sendMessage({
-      action: 'excludeSite',
-      hostname: hostname
-    });
-    dialog.remove();
-  });
-  
-  // 10秒後に自動で閉じる
-  setTimeout(() => {
-    if (dialog.parentNode) {
-      dialog.remove();
+      await chrome.tabs.create({ url: confirmUrl, active: true });
+    } catch (error) {
+      console.error('Failed to open confirmation page:', error);
+      await showNotification(hostname, settings);
     }
-  }, 10000);
+  };
+
+  if (delayMs > 0) {
+    setTimeout(openConfirmTab, delayMs);
+  } else {
+    await openConfirmTab();
+  }
 }
 
 // 通知を表示（フォールバック）
 async function showNotification(hostname, settings) {
+  // 小さな透明なPNG（Data URI）
+  const iconDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
   const notificationId = await chrome.notifications.create({
     type: 'basic',
+    iconUrl: iconDataUrl,
     title: 'Focus Session を開始しますか？',
     message: `${hostname} にアクセスしました`,
     buttons: [
@@ -277,6 +186,8 @@ async function showNotification(hostname, settings) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'startFocus') {
     startFocusSession(message.minutes, message.hostname);
+  } else if (message.action === 'recordFocusStart') {
+    incrementStatistics(message.hostname);
   } else if (message.action === 'skipFocus') {
     chrome.storage.sync.get('settings', (data) => {
       const settings = data.settings || DEFAULT_SETTINGS;
@@ -292,6 +203,18 @@ async function startFocusSession(minutes, hostname) {
   // 分を秒に変換
   const duration = minutes * 60;
 
+  const { siteCategories, siteRules, blacklist } = await chrome.storage.sync.get([
+    'siteCategories',
+    'siteRules',
+    'blacklist'
+  ]);
+  const categories = resolveCategoriesForHost(
+    hostname,
+    siteCategories || {},
+    siteRules || {},
+    blacklist || DEFAULT_BLACKLIST
+  );
+
   // Raycast Focus用のURL Schemeを構築
   const params = new URLSearchParams({
     goal: `Focus: ${hostname}`,
@@ -299,9 +222,48 @@ async function startFocusSession(minutes, hostname) {
     mode: 'block'
   });
 
+  if (categories) {
+    params.set('categories', categories);
+  }
+
   const focusUrl = `raycast://focus/start?${params.toString()}`;
 
+  // デバッグ用ログ
+  console.log(`Opening Raycast Focus with URL: ${focusUrl}`);
+
   // 統計を更新
+  await incrementStatistics(hostname);
+
+  // Raycast Focusを起動（より確実な方法）
+  try {
+    // 新しいタブを作成してURL Schemeを開く
+    const tab = await chrome.tabs.create({ url: focusUrl, active: true });
+
+    // タブが作成されたら、少し待ってから閉じる
+    setTimeout(async () => {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch (e) {
+        // タブが既に閉じられている場合は無視
+        console.log('Tab already closed');
+      }
+    }, 500);
+
+    console.log(`Raycast Focus session started: ${minutes} minutes for ${hostname}`);
+  } catch (error) {
+    console.error('Failed to open Raycast Focus:', error);
+
+    // フォールバック: chrome.tabs.updateを試す
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.update(tabs[0].id, { url: focusUrl });
+      }
+    });
+  }
+}
+
+// 統計を更新
+async function incrementStatistics(hostname) {
   const { statistics } = await chrome.storage.sync.get('statistics');
   const stats = statistics || { totalSessions: 0, byDomain: {} };
 
@@ -309,16 +271,6 @@ async function startFocusSession(minutes, hostname) {
   stats.byDomain[hostname] = (stats.byDomain[hostname] || 0) + 1;
 
   await chrome.storage.sync.set({ statistics: stats });
-
-  // Raycast Focusを起動
-  chrome.tabs.create({ url: focusUrl, active: false }, (tab) => {
-    // タブを即座に閉じる（URL schemeが開かれたら不要）
-    setTimeout(() => {
-      chrome.tabs.remove(tab.id);
-    }, 100);
-  });
-
-  console.log(`Raycast Focus session started: ${minutes} minutes for ${hostname}`);
 }
 
 // スキップ時のクールダウンを設定
@@ -334,11 +286,86 @@ async function setSkipCooldown(hostname, cooldownMinutes) {
 
 // サイトをブラックリストから除外
 async function excludeSiteFromBlacklist(hostname) {
-  const { blacklist } = await chrome.storage.sync.get('blacklist');
+  const { blacklist, siteCategories, siteRules } = await chrome.storage.sync.get([
+    'blacklist',
+    'siteCategories',
+    'siteRules'
+  ]);
   const updatedBlacklist = (blacklist || DEFAULT_BLACKLIST).filter(
     site => !hostname.includes(site) && !site.includes(hostname)
   );
+
+  const updatedCategories = siteCategories || {};
+  Object.keys(updatedCategories).forEach((key) => {
+    if (hostname.includes(key) || key.includes(hostname)) {
+      delete updatedCategories[key];
+    }
+  });
+
+  const updatedRules = siteRules || {};
+  Object.keys(updatedRules).forEach((key) => {
+    if (hostname.includes(key) || key.includes(hostname)) {
+      delete updatedRules[key];
+    }
+  });
   
-  await chrome.storage.sync.set({ blacklist: updatedBlacklist });
+  await chrome.storage.sync.set({
+    blacklist: updatedBlacklist,
+    siteCategories: updatedCategories,
+    siteRules: updatedRules
+  });
   console.log(`Excluded ${hostname} from blacklist`);
+}
+
+// ホスト名に一致するカテゴリを解決
+function findMatchingCategories(hostname, siteCategories) {
+  let bestKey = null;
+  Object.keys(siteCategories).forEach((key) => {
+    if (hostname.includes(key) || key.includes(hostname)) {
+      if (!bestKey || key.length > bestKey.length) {
+        bestKey = key;
+      }
+    }
+  });
+
+  return bestKey ? siteCategories[bestKey] : '';
+}
+
+// ブラックリストに一致するキーを解決
+function findMatchingSite(hostname, blacklist) {
+  let bestKey = null;
+  (blacklist || []).forEach((key) => {
+    if (hostname.includes(key) || key.includes(hostname)) {
+      if (!bestKey || key.length > bestKey.length) {
+        bestKey = key;
+      }
+    }
+  });
+
+  return bestKey;
+}
+
+// categories の書式を正規化（カンマ区切り・空白削除）
+function normalizeCategories(value) {
+  if (!value) {
+    return '';
+  }
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(',');
+}
+
+// ルールに応じてカテゴリを解決
+function resolveCategoriesForHost(hostname, siteCategories, siteRules, blacklist) {
+  const matchedSite = findMatchingSite(hostname, blacklist);
+  if (!matchedSite) {
+    return '';
+  }
+  const rule = siteRules[matchedSite];
+  if (!rule || rule.blockCategories !== true) {
+    return '';
+  }
+  return normalizeCategories(siteCategories[matchedSite]);
 }
