@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Raycast Focus Auto-Start",
+  "version": "1.0.0",
+  "description": "特定のウェブサイトにアクセスした際に、自動的にFocus Sessionの起動を提案するChrome拡張機能",
+  "permissions": [
+    "tabs",
+    "storage",
+    "notifications",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
+}
