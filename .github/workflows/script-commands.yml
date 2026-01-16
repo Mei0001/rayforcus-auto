@@ -1,0 +1,61 @@
+name: Set as Executable and Generate Documentation
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - commands/README.md
+      - commands/extensions.json
+
+jobs:
+  scriptCommands:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Setup Xcode
+        uses: raycast/github-actions/setup-xcode@xcode-16.1.x
+
+      - name: Setup GIT
+        uses: raycast/github-actions/setup-git@v1.1.0
+
+      - name: Build Toolkit
+        run: |
+          make build
+
+      - name: Check and adjust scripts
+        run: |
+          make set-executable-and-commit
+
+      - name: Generate Script Commands Documentation
+        run: |
+          make gen-docs-and-commit
+
+      - name: Rebase
+        if: success()
+        run: git pull origin ${{ github.ref }} --autostash --rebase -X ours
+
+      - name: Push
+        if: success()
+        uses: ad-m/github-push-action@master
+        with:
+          branch: ${{ github.ref }}
+          github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Notify Failure
+        if: failure()
+        uses: edge/simple-slack-notify@master
+        with:
+          color: "danger"
+          text: ":no_entry_sign: ${env.GITHUB_WORKFLOW} has failed"
+          fields: |
+            [
+              { "title": "Action logs:", "value": "${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}"},
+              { "title": "Commit:", "value": "${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/commit/${ env.GITHUB_SHA }"}
+            ]
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_STREAM_INFRA_CHANNEL_WEBHOOK_URL }}
